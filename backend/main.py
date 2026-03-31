@@ -35,6 +35,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "admin1020")
 _valid_tokens: set[str] = set()
 
+AUTH_COOKIE_NAME = "dev_easy_doc_token"
 AUTH_EXEMPT_PATHS = {"/api/auth/login"}
 
 
@@ -46,7 +47,10 @@ async def auth_middleware(request: Request, call_next):
     if not path.startswith("/api/") or path in AUTH_EXEMPT_PATHS or request.method == "OPTIONS":
         return await call_next(request)
 
+    # Check Authorization header first, then fall back to cookie
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not token:
+        token = request.cookies.get(AUTH_COOKIE_NAME, "")
     if not token or token not in _valid_tokens:
         return JSONResponse(status_code=401, content={"detail": "인증이 필요합니다"})
 
@@ -63,14 +67,26 @@ async def auth_login(data: AuthLogin):
         raise HTTPException(status_code=401, detail="비밀번호가 올바르지 않습니다")
     token = secrets.token_hex(32)
     _valid_tokens.add(token)
-    return {"token": token}
+    response = JSONResponse({"token": token})
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=86400 * 30,
+    )
+    return response
 
 
 @app.post("/api/auth/logout")
 async def auth_logout(request: Request):
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not token:
+        token = request.cookies.get(AUTH_COOKIE_NAME, "")
     _valid_tokens.discard(token)
-    return {"message": "로그아웃 되었습니다"}
+    response = JSONResponse({"message": "로그아웃 되었습니다"})
+    response.delete_cookie(AUTH_COOKIE_NAME)
+    return response
 
 
 @app.get("/api/auth/verify")
