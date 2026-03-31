@@ -4,13 +4,115 @@
 
 const MAX_TABLE_ROWS = 10000;
 
+/* ------------------------------------------
+   Auth Helper
+   ------------------------------------------ */
+
+function getAuthToken() {
+    return localStorage.getItem('dev_easy_doc_token') || '';
+}
+
+function authHeaders(extra = {}) {
+    return { 'Authorization': `Bearer ${getAuthToken()}`, ...extra };
+}
+
+async function authFetch(url, options = {}) {
+    options.headers = { ...authHeaders(), ...(options.headers || {}) };
+    const resp = await fetch(url, options);
+    if (resp.status === 401) {
+        localStorage.removeItem('dev_easy_doc_token');
+        location.reload();
+    }
+    return resp;
+}
+
+/* ------------------------------------------
+   Login Controller
+   ------------------------------------------ */
+
+async function initAuth() {
+    const token = getAuthToken();
+    if (token) {
+        try {
+            const resp = await fetch('/api/auth/verify', { headers: { 'Authorization': `Bearer ${token}` } });
+            if (resp.ok) {
+                showApp();
+                return;
+            }
+        } catch (_) {}
+        localStorage.removeItem('dev_easy_doc_token');
+    }
+    showLogin();
+}
+
+function showLogin() {
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('login-password').focus();
+}
+
+function showApp() {
+    document.getElementById('login-overlay').style.display = 'none';
+    document.getElementById('app').style.display = '';
+    if (!window._devEasyDoc) {
+        window._devEasyDoc = new DevEasyDoc();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pw = document.getElementById('login-password');
+        const err = document.getElementById('login-error');
+        const btn = e.target.querySelector('.login-btn');
+        err.textContent = '';
+        btn.disabled = true;
+
+        try {
+            const resp = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: pw.value }),
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                localStorage.setItem('dev_easy_doc_token', data.token);
+                showApp();
+            } else {
+                err.textContent = '비밀번호가 올바르지 않습니다';
+                pw.value = '';
+                pw.focus();
+            }
+        } catch (_) {
+            err.textContent = '서버에 연결할 수 없습니다';
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    initAuth();
+});
+
 class DevEasyDoc {
     constructor() {
         this.items = [];
         this.selectedFile = null;
         this.currentFolder = '';
         this.breadcrumb = [];
-        this.sortBy = 'name';
+        const savedSort = localStorage.getItem('dev_easy_doc_sort');
+        if (savedSort) {
+            try {
+                const parsed = JSON.parse(savedSort);
+                this.sortBy = parsed.sort || 'name';
+                this.sortOrder = parsed.order || 'asc';
+            } catch (_) {
+                this.sortBy = 'name';
+                this.sortOrder = 'asc';
+            }
+        } else {
+            this.sortBy = 'name';
+            this.sortOrder = 'asc';
+        }
         this.sidebarCollapsed = false;
         this.dragItem = null;
 
@@ -94,8 +196,8 @@ class DevEasyDoc {
 
     async loadFiles() {
         try {
-            const params = new URLSearchParams({ folder: this.currentFolder, sort: this.sortBy });
-            const response = await fetch(`/api/files?${params}`);
+            const params = new URLSearchParams({ folder: this.currentFolder, sort: this.sortBy, order: this.sortOrder });
+            const response = await authFetch(`/api/files?${params}`);
             if (!response.ok) throw new Error('Failed to fetch files');
             const data = await response.json();
             this.items = data.items;
@@ -132,7 +234,7 @@ class DevEasyDoc {
         }
 
         try {
-            const response = await fetch('/api/upload', { method: 'POST', body: formData });
+            const response = await authFetch('/api/upload', { method: 'POST', body: formData });
             if (!response.ok) throw new Error('Upload failed');
             const data = await response.json();
 
@@ -167,7 +269,7 @@ class DevEasyDoc {
         const name = filePath.split('/').pop();
         if (!confirm(`"${name}" 파일을 삭제하시겠습니까?`)) return;
         try {
-            const response = await fetch(`/api/files/${encodeURIComponent(filePath)}`, { method: 'DELETE' });
+            const response = await authFetch(`/api/files/${encodeURIComponent(filePath)}`, { method: 'DELETE' });
             if (response.ok) {
                 if (this.selectedFile === filePath) {
                     this.selectedFile = null;
@@ -188,7 +290,7 @@ class DevEasyDoc {
         const name = folderPath.split('/').pop();
         if (!confirm(`"${name}" 폴더와 내부 파일을 모두 삭제하시겠습니까?`)) return;
         try {
-            const response = await fetch(`/api/folders/${encodeURIComponent(folderPath)}`, { method: 'DELETE' });
+            const response = await authFetch(`/api/folders/${encodeURIComponent(folderPath)}`, { method: 'DELETE' });
             if (response.ok) {
                 await this.loadFiles();
                 this.showToast('폴더가 삭제되었습니다', 'success');
@@ -203,7 +305,7 @@ class DevEasyDoc {
 
     async createFolder(name) {
         try {
-            const response = await fetch('/api/folders', {
+            const response = await authFetch('/api/folders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, parent: this.currentFolder }),
@@ -222,7 +324,7 @@ class DevEasyDoc {
 
     async moveItem(sourcePath, destFolder) {
         try {
-            const response = await fetch('/api/move', {
+            const response = await authFetch('/api/move', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ source: sourcePath, destination: destFolder }),
@@ -446,20 +548,32 @@ class DevEasyDoc {
     }
 
     renderHTMLFile(filePath) {
-        const url = `/api/files/${encodeURIComponent(filePath)}`;
-        this.fileViewer.innerHTML = `
-            <iframe src="${this.escapeAttr(url)}"
-                    sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-                    style="flex:1; width:100%; height:100%; border:none;">
-            </iframe>
-        `;
+        this.fileViewer.innerHTML = '<div class="loading"><div class="spinner"></div><p>파일 로딩 중...</p></div>';
+        authFetch(`/api/files/${encodeURIComponent(filePath)}`)
+            .then(resp => {
+                if (!resp.ok) throw new Error('Failed to fetch');
+                return resp.blob();
+            })
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                this.fileViewer.innerHTML = `
+                    <iframe src="${this.escapeAttr(url)}"
+                            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                            style="flex:1; width:100%; height:100%; border:none;"
+                            onload="URL.revokeObjectURL('${url}')">
+                    </iframe>
+                `;
+            })
+            .catch(() => {
+                this.fileViewer.innerHTML = '<div class="loading"><p>HTML 파일을 불러오지 못했습니다</p></div>';
+            });
     }
 
     async renderSpreadsheet(filePath) {
         this.fileViewer.innerHTML = '<div class="loading"><div class="spinner"></div><p>파일 로딩 중...</p></div>';
 
         try {
-            const response = await fetch(`/api/files/${encodeURIComponent(filePath)}`);
+            const response = await authFetch(`/api/files/${encodeURIComponent(filePath)}`);
             if (!response.ok) throw new Error('Failed to fetch file');
 
             const arrayBuffer = await response.arrayBuffer();
@@ -574,11 +688,22 @@ class DevEasyDoc {
     }
 
     cycleSort() {
-        const sorts = ['name', 'date', 'type', 'size'];
-        const labels = { name: '이름순', date: '날짜순', type: '유형순', size: '크기순' };
-        const idx = sorts.indexOf(this.sortBy);
-        this.sortBy = sorts[(idx + 1) % sorts.length];
-        this.showToast(`정렬: ${labels[this.sortBy]}`, 'info');
+        const cycle = [
+            { sort: 'name', order: 'asc',  label: '이름 오름차순' },
+            { sort: 'name', order: 'desc', label: '이름 내림차순' },
+            { sort: 'date', order: 'asc',  label: '날짜 오름차순' },
+            { sort: 'date', order: 'desc', label: '날짜 내림차순' },
+            { sort: 'type', order: 'asc',  label: '유형 오름차순' },
+            { sort: 'type', order: 'desc', label: '유형 내림차순' },
+            { sort: 'size', order: 'asc',  label: '크기 오름차순' },
+            { sort: 'size', order: 'desc', label: '크기 내림차순' },
+        ];
+        const idx = cycle.findIndex(c => c.sort === this.sortBy && c.order === this.sortOrder);
+        const next = cycle[(idx + 1) % cycle.length];
+        this.sortBy = next.sort;
+        this.sortOrder = next.order;
+        localStorage.setItem('dev_easy_doc_sort', JSON.stringify({ sort: this.sortBy, order: this.sortOrder }));
+        this.showToast(`정렬: ${next.label}`, 'info');
         this.loadFiles();
     }
 
@@ -649,7 +774,3 @@ class DevEasyDoc {
             .replace(/>/g, '&gt;');
     }
 }
-
-document.addEventListener('DOMContentLoaded', () => {
-    new DevEasyDoc();
-});

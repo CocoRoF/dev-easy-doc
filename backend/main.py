@@ -1,12 +1,13 @@
 import os
+import secrets
 import shutil
 import unicodedata
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -26,6 +27,55 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".html", ".htm", ".xlsx", ".xls", ".csv"}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+# ==============================================
+# Authentication
+# ==============================================
+
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "admin1020")
+_valid_tokens: set[str] = set()
+
+AUTH_EXEMPT_PATHS = {"/api/auth/login"}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+
+    # Skip auth for non-API routes (static files) and login endpoint
+    if not path.startswith("/api/") or path in AUTH_EXEMPT_PATHS:
+        return await call_next(request)
+
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not token or token not in _valid_tokens:
+        return JSONResponse(status_code=401, content={"detail": "인증이 필요합니다"})
+
+    return await call_next(request)
+
+
+class AuthLogin(BaseModel):
+    password: str
+
+
+@app.post("/api/auth/login")
+async def auth_login(data: AuthLogin):
+    if not secrets.compare_digest(data.password, APP_PASSWORD):
+        raise HTTPException(status_code=401, detail="비밀번호가 올바르지 않습니다")
+    token = secrets.token_hex(32)
+    _valid_tokens.add(token)
+    return {"token": token}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request):
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    _valid_tokens.discard(token)
+    return {"message": "로그아웃 되었습니다"}
+
+
+@app.get("/api/auth/verify")
+async def auth_verify():
+    return {"valid": True}
 
 
 def secure_name(name: str) -> str:
@@ -72,9 +122,12 @@ def get_relative_path(full_path: Path) -> str:
 # ==============================================
 
 @app.get("/api/files")
-async def list_files(folder: str = "", sort: str = "name"):
+async def list_files(folder: str = "", sort: str = "name", order: str = "asc"):
     if sort not in ("name", "date", "type", "size"):
         sort = "name"
+    if order not in ("asc", "desc"):
+        order = "asc"
+    is_desc = order == "desc"
 
     folder_path = get_folder_path(folder)
     if not folder_path.exists() or not folder_path.is_dir():
@@ -106,16 +159,16 @@ async def list_files(folder: str = "", sort: str = "name"):
                 "modified": stat.st_mtime,
             })
 
-    folders.sort(key=lambda x: x["name"].lower())
+    folders.sort(key=lambda x: x["name"].lower(), reverse=is_desc)
 
     if sort == "name":
-        files.sort(key=lambda x: x["name"].lower())
+        files.sort(key=lambda x: x["name"].lower(), reverse=is_desc)
     elif sort == "date":
-        files.sort(key=lambda x: x["modified"], reverse=True)
+        files.sort(key=lambda x: x["modified"], reverse=not is_desc)
     elif sort == "type":
-        files.sort(key=lambda x: (x["type"], x["name"].lower()))
+        files.sort(key=lambda x: (x["type"], x["name"].lower()), reverse=is_desc)
     elif sort == "size":
-        files.sort(key=lambda x: x["size"], reverse=True)
+        files.sort(key=lambda x: x["size"], reverse=not is_desc)
 
     breadcrumb = []
     if folder and folder != "/" and folder != ".":
