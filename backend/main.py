@@ -42,8 +42,8 @@ AUTH_EXEMPT_PATHS = {"/api/auth/login"}
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
-    # Skip auth for non-API routes (static files) and login endpoint
-    if not path.startswith("/api/") or path in AUTH_EXEMPT_PATHS:
+    # Skip auth for non-API routes (static files), login endpoint, and CORS preflight
+    if not path.startswith("/api/") or path in AUTH_EXEMPT_PATHS or request.method == "OPTIONS":
         return await call_next(request)
 
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()

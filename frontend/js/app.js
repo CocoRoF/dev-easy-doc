@@ -78,10 +78,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await resp.json();
                 localStorage.setItem('dev_easy_doc_token', data.token);
                 showApp();
-            } else {
+            } else if (resp.status === 401) {
                 err.textContent = '비밀번호가 올바르지 않습니다';
                 pw.value = '';
                 pw.focus();
+            } else {
+                err.textContent = `서버 오류가 발생했습니다 (${resp.status})`;
             }
         } catch (_) {
             err.textContent = '서버에 연결할 수 없습니다';

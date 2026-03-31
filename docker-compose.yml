@@ -3,10 +3,9 @@ services:
     build: ./backend
     volumes:
       - upload_data:/app/uploads
-    env_file:
-      - .env
     environment:
       - UPLOAD_DIR=/app/uploads
+      - APP_PASSWORD=${APP_PASSWORD:-admin1020}
     restart: unless-stopped
 
   nginx:
