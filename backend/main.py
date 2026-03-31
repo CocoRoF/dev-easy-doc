@@ -1,12 +1,14 @@
 import os
+import shutil
 import unicodedata
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 app = FastAPI(title="DEV EASY DOC API")
 
@@ -26,37 +28,85 @@ ALLOWED_EXTENSIONS = {".html", ".htm", ".xlsx", ".xls", ".csv"}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 
-def secure_filename(filename: str) -> str:
-    """Sanitize filename while preserving Unicode characters (e.g., Korean)."""
-    filename = unicodedata.normalize("NFC", filename)
-    # Remove null bytes
-    filename = filename.replace("\x00", "")
-    # Keep only the filename part (strip directory components)
-    filename = Path(filename).name
-    # Remove path traversal patterns
-    filename = filename.replace("..", "")
-    # Strip leading/trailing whitespace and dots
-    filename = filename.strip(". ")
-    if not filename:
-        filename = "unnamed"
-    return filename
+def secure_name(name: str) -> str:
+    """Sanitize a single file/folder name segment while preserving Unicode."""
+    name = unicodedata.normalize("NFC", name)
+    name = name.replace("\x00", "")
+    name = Path(name).name
+    name = name.replace("..", "")
+    name = name.strip(". ")
+    if not name:
+        name = "unnamed"
+    return name
 
+
+def resolve_safe_path(relative_path: str) -> Path:
+    """Resolve a relative path under UPLOAD_DIR, ensuring no escape."""
+    parts = relative_path.replace("\\", "/").split("/")
+    clean_parts = [secure_name(p) for p in parts if p and p != "."]
+    resolved = UPLOAD_DIR
+    for part in clean_parts:
+        resolved = resolved / part
+    try:
+        resolved.resolve().relative_to(UPLOAD_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="접근이 거부되었습니다")
+    return resolved
+
+
+def get_folder_path(folder: Optional[str]) -> Path:
+    if not folder or folder == "/" or folder == ".":
+        return UPLOAD_DIR
+    return resolve_safe_path(folder)
+
+
+def get_relative_path(full_path: Path) -> str:
+    try:
+        return str(full_path.relative_to(UPLOAD_DIR)).replace("\\", "/")
+    except ValueError:
+        return full_path.name
+
+
+# ==============================================
+# File & Folder listing
+# ==============================================
 
 @app.get("/api/files")
-async def list_files(sort: str = "name"):
+async def list_files(folder: str = "", sort: str = "name"):
     if sort not in ("name", "date", "type", "size"):
         sort = "name"
 
+    folder_path = get_folder_path(folder)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다")
+
+    folders = []
     files = []
-    for f in UPLOAD_DIR.iterdir():
-        if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS:
-            stat = f.stat()
+
+    for item in folder_path.iterdir():
+        if item.name.startswith("."):
+            continue
+        if item.is_dir():
+            count = sum(1 for x in item.iterdir() if not x.name.startswith("."))
+            folders.append({
+                "name": item.name,
+                "path": get_relative_path(item),
+                "isFolder": True,
+                "itemCount": count,
+                "modified": item.stat().st_mtime,
+            })
+        elif item.is_file() and item.suffix.lower() in ALLOWED_EXTENSIONS:
+            stat = item.stat()
             files.append({
-                "name": f.name,
+                "name": item.name,
+                "path": get_relative_path(item),
+                "isFolder": False,
                 "size": stat.st_size,
-                "type": f.suffix.lower().lstrip("."),
+                "type": item.suffix.lower().lstrip("."),
                 "modified": stat.st_mtime,
             })
+
+    folders.sort(key=lambda x: x["name"].lower())
 
     if sort == "name":
         files.sort(key=lambda x: x["name"].lower())
@@ -67,11 +117,31 @@ async def list_files(sort: str = "name"):
     elif sort == "size":
         files.sort(key=lambda x: x["size"], reverse=True)
 
-    return {"files": files}
+    breadcrumb = []
+    if folder and folder != "/" and folder != ".":
+        parts = folder.replace("\\", "/").split("/")
+        accumulated = ""
+        for part in parts:
+            part = secure_name(part)
+            accumulated = f"{accumulated}/{part}" if accumulated else part
+            breadcrumb.append({"name": part, "path": accumulated})
 
+    return {
+        "currentFolder": folder or "",
+        "breadcrumb": breadcrumb,
+        "items": folders + files,
+    }
+
+
+# ==============================================
+# Upload (supports folder parameter)
+# ==============================================
 
 @app.post("/api/upload")
-async def upload_files(files: List[UploadFile] = File(...)):
+async def upload_files(files: List[UploadFile] = File(...), folder: str = ""):
+    folder_path = get_folder_path(folder)
+    folder_path.mkdir(parents=True, exist_ok=True)
+
     results = []
     for file in files:
         ext = Path(file.filename).suffix.lower()
@@ -83,8 +153,8 @@ async def upload_files(files: List[UploadFile] = File(...)):
             })
             continue
 
-        safe_name = secure_filename(file.filename)
-        file_path = UPLOAD_DIR / safe_name
+        safe = secure_name(file.filename)
+        file_path = folder_path / safe
 
         contents = await file.read()
         if len(contents) > MAX_FILE_SIZE:
@@ -98,24 +168,104 @@ async def upload_files(files: List[UploadFile] = File(...)):
         with open(file_path, "wb") as f:
             f.write(contents)
 
-        results.append({"filename": safe_name, "success": True})
+        results.append({"filename": safe, "success": True})
 
     return {"results": results}
 
 
-@app.get("/api/files/{filename:path}")
-async def get_file(filename: str):
-    safe_name = secure_filename(filename)
-    file_path = UPLOAD_DIR / safe_name
+# ==============================================
+# Folder management
+# ==============================================
 
-    if not file_path.exists() or not file_path.is_file():
+class FolderCreate(BaseModel):
+    name: str
+    parent: str = ""
+
+
+class ItemMove(BaseModel):
+    source: str
+    destination: str
+
+
+class ItemRename(BaseModel):
+    path: str
+    newName: str
+
+
+@app.post("/api/folders")
+async def create_folder(data: FolderCreate):
+    parent_path = get_folder_path(data.parent)
+    if not parent_path.exists():
+        raise HTTPException(status_code=404, detail="상위 폴더를 찾을 수 없습니다")
+
+    folder_name = secure_name(data.name)
+    new_folder = parent_path / folder_name
+
+    if new_folder.exists():
+        raise HTTPException(status_code=409, detail="이미 존재하는 폴더입니다")
+
+    new_folder.mkdir(parents=True, exist_ok=True)
+    return {"name": folder_name, "path": get_relative_path(new_folder)}
+
+
+@app.delete("/api/folders/{folder_path:path}")
+async def delete_folder(folder_path: str):
+    target = resolve_safe_path(folder_path)
+
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다")
+
+    if target == UPLOAD_DIR:
+        raise HTTPException(status_code=400, detail="루트 폴더는 삭제할 수 없습니다")
+
+    shutil.rmtree(target)
+    return {"message": "폴더가 삭제되었습니다"}
+
+
+@app.post("/api/move")
+async def move_item(data: ItemMove):
+    source = resolve_safe_path(data.source)
+    if not source.exists():
+        raise HTTPException(status_code=404, detail="원본을 찾을 수 없습니다")
+
+    dest_folder = get_folder_path(data.destination)
+    if not dest_folder.exists():
+        dest_folder.mkdir(parents=True, exist_ok=True)
+
+    target = dest_folder / source.name
+    if target.exists():
+        raise HTTPException(status_code=409, detail="대상 위치에 동일한 이름이 존재합니다")
+
+    shutil.move(str(source), str(target))
+    return {"newPath": get_relative_path(target)}
+
+
+@app.post("/api/rename")
+async def rename_item(data: ItemRename):
+    source = resolve_safe_path(data.path)
+    if not source.exists():
+        raise HTTPException(status_code=404, detail="항목을 찾을 수 없습니다")
+
+    new_name = secure_name(data.newName)
+    target = source.parent / new_name
+
+    if target.exists():
+        raise HTTPException(status_code=409, detail="동일한 이름이 이미 존재합니다")
+
+    source.rename(target)
+    return {"newPath": get_relative_path(target), "newName": new_name}
+
+
+# ==============================================
+# File retrieval
+# ==============================================
+
+@app.get("/api/files/{file_path:path}")
+async def get_file(file_path: str):
+    target = resolve_safe_path(file_path)
+
+    if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
-
-    # Ensure the resolved path is within UPLOAD_DIR (prevent path traversal)
-    try:
-        file_path.resolve().relative_to(UPLOAD_DIR.resolve())
-    except ValueError:
-        raise HTTPException(status_code=403, detail="접근이 거부되었습니다")
 
     media_types = {
         ".html": "text/html; charset=utf-8",
@@ -124,31 +274,35 @@ async def get_file(filename: str):
         ".xls": "application/vnd.ms-excel",
         ".csv": "text/csv; charset=utf-8",
     }
-    ext = file_path.suffix.lower()
+    ext = target.suffix.lower()
     media_type = media_types.get(ext, "application/octet-stream")
 
-    return FileResponse(file_path, filename=safe_name, media_type=media_type)
+    inline_types = {".html", ".htm", ".csv"}
+    if ext in inline_types:
+        return FileResponse(target, media_type=media_type)
+    else:
+        return FileResponse(target, filename=target.name, media_type=media_type)
 
 
-@app.delete("/api/files/{filename:path}")
-async def delete_file(filename: str):
-    safe_name = secure_filename(filename)
-    file_path = UPLOAD_DIR / safe_name
+# ==============================================
+# File deletion
+# ==============================================
 
-    if not file_path.exists() or not file_path.is_file():
+@app.delete("/api/files/{file_path:path}")
+async def delete_file(file_path: str):
+    target = resolve_safe_path(file_path)
+
+    if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
 
-    try:
-        file_path.resolve().relative_to(UPLOAD_DIR.resolve())
-    except ValueError:
-        raise HTTPException(status_code=403, detail="접근이 거부되었습니다")
-
-    file_path.unlink()
+    target.unlink()
     return {"message": "파일이 삭제되었습니다"}
 
 
-# For local development: serve frontend static files
-# In Docker, nginx handles this (the frontend directory won't exist in the container)
+# ==============================================
+# Static file serving for local development
+# ==============================================
+
 _frontend_path = Path(__file__).parent.parent / "frontend"
 if _frontend_path.is_dir():
     app.mount("/", StaticFiles(directory=str(_frontend_path), html=True), name="frontend")

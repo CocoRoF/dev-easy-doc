@@ -1,6 +1,6 @@
 # DEV EASY DOC
 
-간단한 문서 파일 공유 및 뷰어 시스템입니다.  
+간단한 문서 파일 공유 및 뷰어 시스템입니다.
 HTML, XLSX, XLS, CSV 파일을 업로드하고 브라우저에서 바로 확인할 수 있습니다.
 
 ## 구조
@@ -34,7 +34,7 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-브라우저에서 http://localhost:8000 으로 접속합니다.  
+브라우저에서 http://localhost:8000 으로 접속합니다.
 (백엔드가 프론트엔드 정적 파일도 함께 서빙합니다)
 
 ## Docker 배포
@@ -43,7 +43,7 @@ uvicorn main:app --reload --port 8000
 docker compose up -d --build
 ```
 
-포트 **58399** 에서 서비스됩니다.  
+포트 **58399** 에서 서비스됩니다.
 Cloudflare Tunnel로 58399 포트를 연결하면 외부 접속이 가능합니다.
 
 ### 볼륨

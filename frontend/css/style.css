@@ -27,6 +27,7 @@
     --html-color: #e44d26;
     --xlsx-color: #217346;
     --csv-color: #dd6b20;
+    --folder-color: #6366f1;
     --radius: 8px;
     --radius-sm: 4px;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -237,6 +238,82 @@ body {
 }
 
 /* ============================================
+   Breadcrumb
+   ============================================ */
+
+.breadcrumb {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    gap: 4px;
+    border-bottom: 1px solid var(--sidebar-border);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    min-height: 0;
+}
+
+.breadcrumb-item {
+    font-size: 12px;
+    color: var(--text-light);
+    white-space: nowrap;
+}
+
+.breadcrumb-link {
+    cursor: pointer;
+    color: var(--primary);
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    transition: var(--transition);
+}
+
+.breadcrumb-link:hover {
+    background: var(--primary-light);
+}
+
+.breadcrumb-link.drag-over {
+    background: var(--primary);
+    color: white;
+}
+
+.breadcrumb-sep {
+    font-size: 11px;
+    color: var(--text-light);
+}
+
+.breadcrumb-current {
+    font-weight: 600;
+    color: var(--text);
+}
+
+/* ============================================
+   Folder Items
+   ============================================ */
+
+.file-badge.folder {
+    background: var(--folder-color);
+}
+
+.folder-item {
+    border: 2px solid transparent;
+    transition: var(--transition);
+}
+
+.folder-item.drag-over {
+    border-color: var(--primary);
+    background: var(--primary-light) !important;
+}
+
+.file-item.dragging {
+    opacity: 0.4;
+}
+
+.file-item.drag-over {
+    border-color: var(--primary);
+    background: var(--primary-light) !important;
+}
+
+/* ============================================
    Main Content
    ============================================ */
 
@@ -357,6 +434,15 @@ body {
     max-width: 400px;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.table-container td.expanded {
+    white-space: normal;
+    word-break: break-word;
+    max-width: none;
+    background: var(--primary-light) !important;
 }
 
 .table-container tr:nth-child(even) {
@@ -386,24 +472,24 @@ body {
     left: 0;
     top: 50%;
     transform: translateY(-50%);
-    width: 24px;
-    height: 48px;
-    background: var(--sidebar-bg);
-    border: 1px solid var(--sidebar-border);
-    border-left: none;
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    width: 28px;
+    height: 52px;
+    background: var(--primary);
+    border: none;
+    border-radius: 0 var(--radius) var(--radius) 0;
     cursor: pointer;
     display: none;
     align-items: center;
     justify-content: center;
-    z-index: 100;
-    color: var(--text-light);
+    z-index: 1000;
+    color: white;
     transition: var(--transition);
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
 }
 
 .sidebar-expand:hover {
-    color: var(--text);
-    background: var(--hover);
+    background: #4a6bc9;
+    color: white;
 }
 
 .sidebar-expand.visible {
