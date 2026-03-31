@@ -1,0 +1,22 @@
+services:
+  backend:
+    build: ./backend
+    volumes:
+      - upload_data:/app/uploads
+    environment:
+      - UPLOAD_DIR=/app/uploads
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "58399:58399"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  upload_data:
