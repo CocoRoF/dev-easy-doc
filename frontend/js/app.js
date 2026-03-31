@@ -244,7 +244,7 @@ class DevEasyDoc {
                 if (i >= domItems.length) return;
                 const status = domItems[i].querySelector('.upload-item-status');
                 if (result.success) {
-                    status.textContent = '완료';
+                    status.textContent = result.overwritten ? '덮어쓰기 완료' : '완료';
                     status.className = 'upload-item-status success';
                 } else {
                     status.textContent = result.error || '실패';
@@ -253,7 +253,13 @@ class DevEasyDoc {
             });
 
             const successCount = data.results.filter(r => r.success).length;
-            if (successCount > 0) this.showToast(`${successCount}개 파일 업로드 완료`, 'success');
+            const overwriteCount = data.results.filter(r => r.success && r.overwritten).length;
+            if (successCount > 0) {
+                const msg = overwriteCount > 0
+                    ? `${successCount}개 파일 업로드 완료 (${overwriteCount}개 덮어쓰기)`
+                    : `${successCount}개 파일 업로드 완료`;
+                this.showToast(msg, 'success');
+            }
             await this.loadFiles();
             setTimeout(() => this.hideUploadModal(), 1500);
         } catch (error) {

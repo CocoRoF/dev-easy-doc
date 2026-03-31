@@ -224,6 +224,7 @@ async def upload_files(files: List[UploadFile] = File(...), folder: str = ""):
 
         safe = secure_name(file.filename)
         file_path = folder_path / safe
+        overwritten = file_path.exists()
 
         contents = await file.read()
         if len(contents) > MAX_FILE_SIZE:
@@ -237,7 +238,7 @@ async def upload_files(files: List[UploadFile] = File(...), folder: str = ""):
         with open(file_path, "wb") as f:
             f.write(contents)
 
-        results.append({"filename": safe, "success": True})
+        results.append({"filename": safe, "success": True, "overwritten": overwritten})
 
     return {"results": results}
 
