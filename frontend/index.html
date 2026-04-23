@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DEV EASY DOC</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>">
-    <link rel="stylesheet" href="/css/style.css?v=2">
+    <link rel="stylesheet" href="/css/style.css?v=3">
 </head>
 <body>
     <!-- Login Overlay -->
@@ -106,8 +106,8 @@
                     </svg>
                 </div>
                 <p>파일을 드래그하거나 클릭하여 선택하세요</p>
-                <p class="drop-hint">지원 형식: HTML, XLSX, XLS, CSV (최대 50MB)</p>
-                <input type="file" id="file-input" multiple accept=".html,.htm,.xlsx,.xls,.csv" style="display:none;">
+                <p class="drop-hint">지원 형식: HTML, XLSX, XLS, CSV, PNG, JPG, GIF, WEBP, BMP, SVG (최대 50MB)</p>
+                <input type="file" id="file-input" multiple accept=".html,.htm,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg" style="display:none;">
             </div>
             <div class="upload-list" id="upload-list" style="display:none;"></div>
         </div>
@@ -117,6 +117,6 @@
     <div class="toast-container" id="toast-container"></div>
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-    <script src="/js/app.js?v=2"></script>
+    <script src="/js/app.js?v=3"></script>
 </body>
 </html>

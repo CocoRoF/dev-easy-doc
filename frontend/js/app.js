@@ -3,6 +3,7 @@
    ============================================ */
 
 const MAX_TABLE_ROWS = 10000;
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
 
 /* ------------------------------------------
    Auth Helper
@@ -552,7 +553,203 @@ class DevEasyDoc {
             this.renderHTMLFile(filePath);
         } else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
             await this.renderSpreadsheet(filePath);
+        } else if (IMAGE_EXTS.includes(ext)) {
+            this.renderImage(filePath);
         }
+    }
+
+    renderImage(filePath) {
+        this.fileViewer.innerHTML = `
+            <div class="image-viewer" id="image-viewer">
+                <div class="image-toolbar">
+                    <button class="img-btn" data-act="zoom-out" title="축소 (-)">−</button>
+                    <button class="img-btn img-zoom-label" data-act="reset" title="원본 크기 (0)">100%</button>
+                    <button class="img-btn" data-act="zoom-in" title="확대 (+)">+</button>
+                    <span class="img-sep"></span>
+                    <button class="img-btn" data-act="fit" title="화면에 맞춤 (F)">맞춤</button>
+                    <button class="img-btn" data-act="actual" title="실제 크기 (1)">1:1</button>
+                </div>
+                <div class="image-stage" id="image-stage">
+                    <img class="image-canvas" id="image-canvas" alt="" draggable="false">
+                </div>
+                <div class="image-hint">마우스 휠: 확대/축소 · 드래그: 이동 · 더블클릭: 맞춤/1:1 전환</div>
+            </div>
+        `;
+
+        const stage = document.getElementById('image-stage');
+        const img = document.getElementById('image-canvas');
+        const label = this.fileViewer.querySelector('.img-zoom-label');
+        const state = { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0, fitScale: 1 };
+
+        const apply = () => {
+            img.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
+            if (label) label.textContent = Math.round(state.scale * 100) + '%';
+        };
+
+        const clampScale = (s) => Math.min(40, Math.max(0.05, s));
+
+        const fitToStage = () => {
+            if (!state.natW || !state.natH) return;
+            const sw = stage.clientWidth;
+            const sh = stage.clientHeight;
+            const s = Math.min(sw / state.natW, sh / state.natH, 1);
+            state.fitScale = s > 0 ? s : 1;
+            state.scale = state.fitScale;
+            state.tx = 0;
+            state.ty = 0;
+            apply();
+        };
+
+        const actualSize = () => {
+            state.scale = 1;
+            state.tx = 0;
+            state.ty = 0;
+            apply();
+        };
+
+        const zoomAtPoint = (factor, cx, cy) => {
+            const rect = stage.getBoundingClientRect();
+            const px = cx - rect.left - rect.width / 2;
+            const py = cy - rect.top - rect.height / 2;
+            const newScale = clampScale(state.scale * factor);
+            const ratio = newScale / state.scale;
+            state.tx = px - (px - state.tx) * ratio;
+            state.ty = py - (py - state.ty) * ratio;
+            state.scale = newScale;
+            apply();
+        };
+
+        authFetch(`/api/files/${encodeURIComponent(filePath)}`)
+            .then(resp => {
+                if (!resp.ok) throw new Error('Failed to fetch');
+                return resp.blob();
+            })
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                img.onload = () => {
+                    state.natW = img.naturalWidth || 1;
+                    state.natH = img.naturalHeight || 1;
+                    fitToStage();
+                };
+                img.onerror = () => {
+                    this.fileViewer.innerHTML = '<div class="loading"><p>이미지를 불러오지 못했습니다</p></div>';
+                    URL.revokeObjectURL(url);
+                };
+                img.src = url;
+                img.dataset.blobUrl = url;
+            })
+            .catch(() => {
+                this.fileViewer.innerHTML = '<div class="loading"><p>이미지를 불러오지 못했습니다</p></div>';
+            });
+
+        // Wheel zoom
+        stage.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+            zoomAtPoint(factor, e.clientX, e.clientY);
+        }, { passive: false });
+
+        // Drag to pan
+        let dragging = false;
+        let lastX = 0, lastY = 0;
+        stage.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            dragging = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+            stage.classList.add('grabbing');
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            state.tx += e.clientX - lastX;
+            state.ty += e.clientY - lastY;
+            lastX = e.clientX;
+            lastY = e.clientY;
+            apply();
+        });
+        window.addEventListener('mouseup', () => {
+            if (dragging) {
+                dragging = false;
+                stage.classList.remove('grabbing');
+            }
+        });
+
+        // Double click toggle fit/1:1
+        stage.addEventListener('dblclick', () => {
+            if (Math.abs(state.scale - state.fitScale) < 0.001) {
+                actualSize();
+            } else {
+                fitToStage();
+            }
+        });
+
+        // Toolbar
+        this.fileViewer.querySelectorAll('.img-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const act = btn.dataset.act;
+                const rect = stage.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                if (act === 'zoom-in') zoomAtPoint(1.25, cx, cy);
+                else if (act === 'zoom-out') zoomAtPoint(1 / 1.25, cx, cy);
+                else if (act === 'reset' || act === 'actual') actualSize();
+                else if (act === 'fit') fitToStage();
+            });
+        });
+
+        // Touch pinch/pan
+        let touchState = null;
+        stage.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                touchState = { mode: 'pan', x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else if (e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                touchState = {
+                    mode: 'pinch',
+                    dist: Math.hypot(dx, dy),
+                    cx: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+                    cy: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+                };
+            }
+        }, { passive: true });
+        stage.addEventListener('touchmove', (e) => {
+            if (!touchState) return;
+            if (touchState.mode === 'pan' && e.touches.length === 1) {
+                state.tx += e.touches[0].clientX - touchState.x;
+                state.ty += e.touches[0].clientY - touchState.y;
+                touchState.x = e.touches[0].clientX;
+                touchState.y = e.touches[0].clientY;
+                apply();
+                e.preventDefault();
+            } else if (touchState.mode === 'pinch' && e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.hypot(dx, dy);
+                const factor = dist / touchState.dist;
+                zoomAtPoint(factor, touchState.cx, touchState.cy);
+                touchState.dist = dist;
+                e.preventDefault();
+            }
+        }, { passive: false });
+        stage.addEventListener('touchend', () => { touchState = null; });
+
+        // Keyboard shortcuts (while viewer is active)
+        const keyHandler = (e) => {
+            if (!document.getElementById('image-viewer')) {
+                document.removeEventListener('keydown', keyHandler);
+                return;
+            }
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            const rect = stage.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            if (e.key === '+' || e.key === '=') zoomAtPoint(1.25, cx, cy);
+            else if (e.key === '-' || e.key === '_') zoomAtPoint(1 / 1.25, cx, cy);
+            else if (e.key === '0') actualSize();
+            else if (e.key === 'f' || e.key === 'F') fitToStage();
+        };
+        document.addEventListener('keydown', keyHandler);
     }
 
     renderHTMLFile(filePath) {

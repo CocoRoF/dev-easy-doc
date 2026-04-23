@@ -25,7 +25,11 @@ app.add_middleware(
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "./uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-ALLOWED_EXTENSIONS = {".html", ".htm", ".xlsx", ".xls", ".csv"}
+ALLOWED_EXTENSIONS = {
+    ".html", ".htm", ".xlsx", ".xls", ".csv",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg",
+}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 # ==============================================
@@ -343,11 +347,18 @@ async def get_file(file_path: str):
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".xls": "application/vnd.ms-excel",
         ".csv": "text/csv; charset=utf-8",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+        ".svg": "image/svg+xml",
     }
     ext = target.suffix.lower()
     media_type = media_types.get(ext, "application/octet-stream")
 
-    inline_types = {".html", ".htm", ".csv"}
+    inline_types = {".html", ".htm", ".csv"} | IMAGE_EXTENSIONS
     if ext in inline_types:
         return FileResponse(target, media_type=media_type)
     else:
