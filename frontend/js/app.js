@@ -191,6 +191,34 @@ class DevEasyDoc {
                 setTimeout(() => this.handleUploadFiles(e.dataTransfer.files), 100);
             }
         });
+
+        // External file drop directly onto sidebar -> upload to current folder
+        // (handled before body listener via stopPropagation)
+        const onSidebarDragOver = (e) => {
+            if (!(e.dataTransfer && e.dataTransfer.types.includes('Files'))) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'copy';
+            this.sidebar.classList.add('sidebar-drop-target');
+        };
+        const onSidebarDragLeave = (e) => {
+            if (e.target === this.sidebar || !this.sidebar.contains(e.relatedTarget)) {
+                this.sidebar.classList.remove('sidebar-drop-target');
+            }
+        };
+        const onSidebarDrop = (e) => {
+            if (!(e.dataTransfer && e.dataTransfer.files.length > 0 && e.dataTransfer.types.includes('Files'))) return;
+            e.preventDefault();
+            e.stopPropagation();
+            this.sidebar.classList.remove('sidebar-drop-target');
+            // Determine target folder: if dropped on a folder item, use it; else current folder
+            const folderEl = e.target.closest && e.target.closest('.folder-item');
+            const targetFolder = folderEl ? folderEl.dataset.path : this.currentFolder;
+            this.handleUploadFiles(e.dataTransfer.files, targetFolder);
+        };
+        this.sidebar.addEventListener('dragover', onSidebarDragOver);
+        this.sidebar.addEventListener('dragleave', onSidebarDragLeave);
+        this.sidebar.addEventListener('drop', onSidebarDrop);
     }
 
     /* ------------------------------------------
@@ -213,27 +241,40 @@ class DevEasyDoc {
         }
     }
 
-    async handleUploadFiles(fileList) {
+    async handleUploadFiles(fileList, targetFolder = null) {
         if (!fileList || fileList.length === 0) return;
 
+        const folder = targetFolder !== null ? targetFolder : this.currentFolder;
+        const modalOpen = this.uploadModal.style.display !== 'none' && this.uploadModal.style.display !== '';
+        const useModal = modalOpen;
+
         const uploadList = document.getElementById('upload-list');
-        uploadList.style.display = 'block';
-        uploadList.innerHTML = '';
+        const domItems = [];
+
+        if (useModal) {
+            uploadList.style.display = 'block';
+            uploadList.innerHTML = '';
+        }
 
         const formData = new FormData();
-        formData.append('folder', this.currentFolder);
-        const domItems = [];
+        formData.append('folder', folder);
 
         for (const file of fileList) {
             formData.append('files', file);
-            const item = document.createElement('div');
-            item.className = 'upload-item';
-            item.innerHTML = `
-                <span class="upload-item-name">${this.escapeHtml(file.name)}</span>
-                <span class="upload-item-status uploading">업로드 중...</span>
-            `;
-            uploadList.appendChild(item);
-            domItems.push(item);
+            if (useModal) {
+                const item = document.createElement('div');
+                item.className = 'upload-item';
+                item.innerHTML = `
+                    <span class="upload-item-name">${this.escapeHtml(file.name)}</span>
+                    <span class="upload-item-status uploading">업로드 중...</span>
+                `;
+                uploadList.appendChild(item);
+                domItems.push(item);
+            }
+        }
+
+        if (!useModal) {
+            this.showToast(`${fileList.length}개 파일 업로드 중...`, 'info');
         }
 
         try {
@@ -241,35 +282,49 @@ class DevEasyDoc {
             if (!response.ok) throw new Error('Upload failed');
             const data = await response.json();
 
-            data.results.forEach((result, i) => {
-                if (i >= domItems.length) return;
-                const status = domItems[i].querySelector('.upload-item-status');
-                if (result.success) {
-                    status.textContent = result.overwritten ? '덮어쓰기 완료' : '완료';
-                    status.className = 'upload-item-status success';
-                } else {
-                    status.textContent = result.error || '실패';
-                    status.className = 'upload-item-status error';
-                }
-            });
+            if (useModal) {
+                data.results.forEach((result, i) => {
+                    if (i >= domItems.length) return;
+                    const status = domItems[i].querySelector('.upload-item-status');
+                    if (result.success) {
+                        status.textContent = result.overwritten ? '덮어쓰기 완료' : '완료';
+                        status.className = 'upload-item-status success';
+                    } else {
+                        status.textContent = result.error || '실패';
+                        status.className = 'upload-item-status error';
+                    }
+                });
+            }
 
             const successCount = data.results.filter(r => r.success).length;
+            const failCount = data.results.length - successCount;
             const overwriteCount = data.results.filter(r => r.success && r.overwritten).length;
+            const folderLabel = folder ? `"${folder}"` : 'ROOT';
             if (successCount > 0) {
-                const msg = overwriteCount > 0
-                    ? `${successCount}개 파일 업로드 완료 (${overwriteCount}개 덮어쓰기)`
-                    : `${successCount}개 파일 업로드 완료`;
+                let msg = `${folderLabel}에 ${successCount}개 업로드 완료`;
+                if (overwriteCount > 0) msg += ` (${overwriteCount}개 덮어쓰기)`;
                 this.showToast(msg, 'success');
             }
-            await this.loadFiles();
-            setTimeout(() => this.hideUploadModal(), 1500);
+            if (failCount > 0) {
+                this.showToast(`${failCount}개 파일 업로드 실패`, 'error');
+            }
+
+            // Reload only if upload target is currently visible
+            if (folder === this.currentFolder) {
+                await this.loadFiles();
+            }
+            if (useModal) {
+                setTimeout(() => this.hideUploadModal(), 1500);
+            }
         } catch (error) {
             console.error('Upload failed:', error);
-            domItems.forEach(item => {
-                const status = item.querySelector('.upload-item-status');
-                status.textContent = '실패';
-                status.className = 'upload-item-status error';
-            });
+            if (useModal) {
+                domItems.forEach(item => {
+                    const status = item.querySelector('.upload-item-status');
+                    status.textContent = '실패';
+                    status.className = 'upload-item-status error';
+                });
+            }
             this.showToast('업로드에 실패했습니다', 'error');
         }
     }
@@ -467,9 +522,10 @@ class DevEasyDoc {
             if (el.dataset.isFolder === 'true') {
                 el.addEventListener('dragover', (e) => {
                     e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    // Don't allow dropping on self
-                    if (this.dragItem !== el.dataset.path) {
+                    const isExternal = e.dataTransfer.types.includes('Files');
+                    e.dataTransfer.dropEffect = isExternal ? 'copy' : 'move';
+                    // Don't allow dropping on self (internal move)
+                    if (isExternal || this.dragItem !== el.dataset.path) {
                         el.classList.add('drag-over');
                     }
                 });
@@ -482,6 +538,13 @@ class DevEasyDoc {
                     e.preventDefault();
                     e.stopPropagation();
                     el.classList.remove('drag-over');
+                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0
+                        && e.dataTransfer.types.includes('Files')) {
+                        // External file upload directly into this folder
+                        this.sidebar.classList.remove('sidebar-drop-target');
+                        this.handleUploadFiles(e.dataTransfer.files, el.dataset.path);
+                        return;
+                    }
                     const sourcePath = e.dataTransfer.getData('text/plain');
                     if (sourcePath && sourcePath !== el.dataset.path) {
                         this.moveItem(sourcePath, el.dataset.path);

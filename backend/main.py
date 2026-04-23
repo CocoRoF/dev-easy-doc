@@ -5,7 +5,7 @@ import unicodedata
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -211,7 +211,7 @@ async def list_files(folder: str = "", sort: str = "name", order: str = "asc"):
 # ==============================================
 
 @app.post("/api/upload")
-async def upload_files(files: List[UploadFile] = File(...), folder: str = ""):
+async def upload_files(files: List[UploadFile] = File(...), folder: str = Form("")):
     folder_path = get_folder_path(folder)
     folder_path.mkdir(parents=True, exist_ok=True)
 

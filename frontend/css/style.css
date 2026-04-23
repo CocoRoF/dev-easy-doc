@@ -76,6 +76,32 @@ body {
     border-right: none;
 }
 
+.sidebar.sidebar-drop-target {
+    background: var(--primary-light);
+    box-shadow: inset 0 0 0 2px var(--primary);
+}
+
+.sidebar.sidebar-drop-target::after {
+    content: '현재 폴더에 업로드';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--primary);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    pointer-events: none;
+    z-index: 10;
+    box-shadow: var(--shadow-lg);
+}
+
+.sidebar {
+    position: relative;
+}
+
 .sidebar-header {
     display: flex;
     align-items: center;
